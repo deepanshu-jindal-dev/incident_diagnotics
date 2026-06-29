@@ -1,0 +1,183 @@
+==============================================================
+  DEEPANSHU JINDAL — PROJECT SHOWCASE VIDEO SCRIPT
+  Target length: 3:45 – 4:15
+  Last updated: 2026-06-29
+==============================================================
+
+BEFORE YOU RECORD
+-----------------
+- Start the web app: python3 demo_app/server.py
+- Open http://127.0.0.1:5000 in browser, paste the demo trace
+- Pre-run "Compare with LLM" once so the result is cached/ready
+- Have Demo Mode ready to click on the first take
+- Wear ServiceNow swag if you have it
+
+
+--------------------------------------------------------------
+SECTION 1 — INTRO                                  [0:00–0:25]
+--------------------------------------------------------------
+[VISUAL: Face on camera]
+
+"Hi, I'm Deepanshu Jindal. I'm a final-year student at
+[your university], and this summer I interned at ServiceNow
+on the [your team name] team.
+
+I spent these two months building something from scratch —
+an engine that can automatically find the root cause of a
+software incident. Let me show you what that means."
+
+
+--------------------------------------------------------------
+SECTION 2 — THE PROBLEM                            [0:25–1:00]
+--------------------------------------------------------------
+[VISUAL: Stay on camera OR cut to the before/after slide]
+
+"Imagine a server crashes at 3am. The error message tells you
+*where* it broke — but not *why*. The actual cause might be
+buried three or four function calls away, in a completely
+different file.
+
+Today, an engineer has to trace that path by hand — reading
+code, pinging teammates, hoping someone knows that corner of
+the codebase. That takes hours.
+
+The engine I built does that trace automatically, in about
+6 milliseconds."
+
+
+--------------------------------------------------------------
+SECTION 3 — DEMO                                   [1:00–2:30]
+--------------------------------------------------------------
+[VISUAL: Switch to browser — http://127.0.0.1:5000]
+
+"This is the interface for the engine. I've got a demo app —
+a five-file order and payment system — with a bug planted
+in it. Watch what happens when I paste in the crash trace
+and hit Demo Mode."
+
+[Click "▶ Demo Mode" — let phases animate on screen]
+
+"You can see it working through five phases in real time.
+First it parses the stack trace — pulls out the error type,
+the message, the frames. Then it locates the crash site as
+a node in the knowledge graph it built from the codebase."
+
+[Phase 3 animates — BFS traversal]
+
+"Now it's traversing — walking call edges forward and
+backward across files, scoring candidates as it goes.
+That graph on the right shows you the actual path it walked,
+hop by hop."
+
+[Root cause lights up green]
+
+"Three hops from the crash site — it lands on a single
+function in config.py. High confidence. That config function
+was returning zero as a timeout value, which caused the
+cart lookup to silently return None, which caused the
+payment to crash. The engine traced the entire chain."
+
+[Click "🔍 Compare with LLM"]
+
+"Now here's the thing — you might ask: why not just paste
+the trace into an LLM? I built a comparison into the tool.
+Same trace, same model — Claude Haiku — but one run has
+no extra context, and the other has the engine's output.
+
+The one without the engine misses the root cause. It points
+to the crash site. The one *with* the engine gets it right —
+because the graph already proved which function is guilty.
+The LLM only had to explain it."
+
+
+--------------------------------------------------------------
+SECTION 4 — THE CHALLENGE                          [2:30–3:05]
+--------------------------------------------------------------
+[VISUAL: Back to face on camera]
+
+"The hardest part of building this wasn't the code — it was
+when the engine kept getting the answer wrong.
+
+Every single run, it pointed to the crash site itself as the
+root cause. I spent a while staring at that before I figured
+out what was happening.
+
+The scoring was set up to reward proximity — functions closer
+to the crash score higher. Which sounds right, until you
+realize that at zero hops, proximity always wins. A real
+culprit hiding three function calls downstream could never
+outscore the crash site, no matter what other signals said.
+
+I rebalanced the weights — made git recency the top signal
+instead of proximity — and made the search go in both
+directions. The moment it correctly traced to that config
+bug three hops away, I knew it actually worked."
+
+
+--------------------------------------------------------------
+SECTION 5 — FAVORITE PART + WHAT YOU LEARNED      [3:05–3:35]
+--------------------------------------------------------------
+[VISUAL: Face on camera]
+
+"My favorite part was writing the parser. I built a Python
+tokenizer and parser completely from scratch — no libraries,
+every token by hand. I didn't know I could do that before
+this internship.
+
+What I learned about myself is that I actually enjoy the
+deep, foundational problems — the ones where there's no
+Stack Overflow answer and you have to think your way through
+it. I came in thinking I was decent at software engineering.
+I'm leaving with a much clearer picture of what kind of
+engineer I want to be."
+
+
+--------------------------------------------------------------
+SECTION 6 — REFLECTION + CLOSE                    [3:35–4:05]
+--------------------------------------------------------------
+[VISUAL: Face on camera]
+
+"Beyond the project — this internship taught me how to work
+on a real team, communicate technical ideas to people with
+different backgrounds, and own something end to end.
+
+I came in with a goal to contribute something meaningful,
+not just learn passively. I think I did that.
+
+If I had to leave one thing with whoever's watching —
+the problems that feel impossible at the start are usually
+just ones you haven't broken down yet.
+
+Thanks for watching."
+
+
+==============================================================
+NOTES
+==============================================================
+
+FILL IN before recording:
+  - [your university]
+  - [your team name]
+
+PACING:
+  - Section 3 (demo): speak slower than feels natural while
+    the UI is animating. Let the viewer read the screen.
+  - Section 4 (challenge): this is the emotional core.
+    Don't rush it. Pause after "I knew it actually worked."
+
+LLM COMPARISON timing:
+  - The compare call takes 30–60s. Either:
+    (a) pre-run it before recording and show a saved result, or
+    (b) cut the recording between clicking and the result appearing.
+  - Do not let 45 seconds of dead air sit in the video.
+
+ON "VIBE CODED":
+  - Do not say this. The UI is the demo surface for a
+    system you built from scratch. Just show it.
+
+ON "INTENDED USERS ARE DEVELOPERS":
+  - Say: "This is built for the engineer who gets paged at
+    3am — someone who needs to know not just that something
+    broke, but exactly what in their codebase caused it."
+
+==============================================================

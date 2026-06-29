@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident Diagnostics — No-LLM Root Cause</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#2a3340;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --green:#3fb950;
+    --amber:#d29922; --red:#f85149; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;line-height:1.5}
+  header{padding:20px 28px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  .badge{font-size:11px;font-weight:700;letter-spacing:.5px;padding:4px 9px;border-radius:20px}
+  .badge-nollm{background:rgba(63,185,80,.15);color:var(--green);border:1px solid rgba(63,185,80,.4)}
+  .badge-graph{background:rgba(88,166,255,.12);color:var(--accent);border:1px solid rgba(88,166,255,.35)}
+  .stat{color:var(--muted);font-size:12px;margin-left:auto;font-family:var(--mono)}
+  .graph-select{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+    border-radius:8px;padding:10px 12px;font-size:13px;width:100%;cursor:pointer;margin-bottom:12px}
+  .graph-select:focus{outline:none;border-color:var(--accent)}
+  .graph-stat{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:14px}
+  main{display:grid;grid-template-columns:minmax(380px,1fr) minmax(420px,1.3fr);
+    gap:0;height:calc(100vh - 65px)}
+  .col{padding:22px 28px;overflow:auto}
+  .col.left{border-right:1px solid var(--border)}
+  label.sec{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);
+    display:block;margin:0 0 8px}
+  textarea{width:100%;height:230px;background:#010409;color:#e6edf3;border:1px solid var(--border);
+    border-radius:8px;padding:14px;font-family:var(--mono);font-size:12.5px;resize:vertical}
+  .presets{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+  .presets button{background:var(--panel2);color:var(--text);border:1px solid var(--border);
+    border-radius:6px;padding:6px 11px;font-size:12px;cursor:pointer}
+  .presets button:hover{border-color:var(--accent)}
+  .run-row{display:flex;gap:10px;margin-top:14px}
+  .run{background:var(--accent);color:#06121f;border:none;border-radius:8px;
+    padding:12px 20px;font-size:14px;font-weight:700;cursor:pointer;flex:1}
+  .run:hover{filter:brightness(1.08)}
+  .run:disabled{opacity:.6;cursor:wait}
+  .run.demo{background:var(--panel2);color:var(--text);border:1px solid var(--border)}
+  .run.demo:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  .phase-list{margin:0 0 16px;padding:0;list-style:none}
+  .phase-list li{padding:8px 12px;border-radius:7px;font-size:13px;color:var(--muted);transition:background .2s}
+  .phase-list li.active{color:var(--text);background:rgba(88,166,255,.07)}
+  .phase-list li.done{color:var(--green)}
+  .phase-list li.done .ph-label{color:var(--text)}
+  .ph-row{display:flex;align-items:center;gap:10px}
+  .phase-list li .ph-icon{width:18px;text-align:center;font-size:14px;flex-shrink:0}
+  .phase-list li .ph-label{flex:1}
+  .ph-output{font-size:11.5px;font-family:var(--mono);color:var(--muted);
+    margin-top:5px;padding-left:28px;line-height:1.7;
+    max-height:0;overflow:hidden;transition:max-height .4s ease,opacity .4s ease;opacity:0}
+  .ph-output.visible{max-height:200px;opacity:1}
+  .empty{color:var(--muted);text-align:center;margin-top:80px;font-size:14px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    padding:18px 20px;margin-bottom:16px}
+  .rootcard{border-color:rgba(63,185,80,.5);background:linear-gradient(180deg,rgba(63,185,80,.07),transparent)}
+  .rootcard.fail{border-color:rgba(248,81,73,.5);background:linear-gradient(180deg,rgba(248,81,73,.07),transparent)}
+  .rc-title{font-size:11px;letter-spacing:.7px;text-transform:uppercase;color:var(--green);font-weight:700}
+  .rc-title.fail{color:var(--red)}
+  .rc-node{font-family:var(--mono);font-size:22px;font-weight:700;margin:6px 0 2px}
+  .rc-loc{color:var(--muted);font-family:var(--mono);font-size:12.5px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:16px}
+  .kv .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+  .kv .v{font-size:14px;font-weight:600;margin-top:2px}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px}
+  .conf-high{background:rgba(63,185,80,.18);color:var(--green)}
+  .conf-medium{background:rgba(210,153,34,.18);color:var(--amber)}
+  .conf-low{background:rgba(139,148,158,.2);color:var(--muted)}
+  .chip{display:inline-block;font-size:11px;font-family:var(--mono);background:var(--panel2);
+    border:1px solid var(--border);border-radius:5px;padding:2px 7px;margin:2px 4px 2px 0}
+  .chip.pass{border-color:rgba(63,185,80,.5);color:var(--green)}
+  .chip.fail{border-color:rgba(248,81,73,.4);color:var(--red)}
+  .insight{font-size:13px;color:var(--text);background:rgba(88,166,255,.08);
+    border-left:3px solid var(--accent);padding:10px 14px;border-radius:0 6px 6px 0;margin-top:14px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+  td.mono{font-family:var(--mono)}
+  tr.head td{background:rgba(63,185,80,.08)}
+  .path{font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-word}
+  .path b{color:var(--green)}
+  .arrow{color:var(--border)}
+  details summary{cursor:pointer;color:var(--accent);font-size:13px;margin-top:6px}
+  .meta-rows{display:flex;flex-direction:column;gap:5px;margin:14px 0}
+  .meta-row{display:flex;align-items:baseline;gap:10px;font-size:13px}
+  .meta-k{min-width:110px;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;
+    color:var(--muted);flex-shrink:0}
+  .meta-v{font-family:var(--mono);color:var(--text);word-break:break-all}
+  .timings{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  /* ── graph visualisation ── */
+  #graph-viz{width:100%;height:380px;background:#010409;border-radius:8px;overflow:hidden}
+  .viz-legend{display:flex;gap:18px;margin-top:10px;font-size:11.5px;color:var(--muted)}
+  .viz-legend span{display:flex;align-items:center;gap:5px}
+  .leg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  .node-tooltip{position:fixed;background:var(--panel);border:1px solid var(--border);
+    border-radius:7px;padding:8px 12px;font-size:12px;pointer-events:none;
+    font-family:var(--mono);z-index:999;display:none}
+  /* ── LLM comparison ── */
+  .cmp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px}
+  .cmp-col{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:14px}
+  .cmp-col.winner{border-color:rgba(63,185,80,.5)}
+  .cmp-col.loser{border-color:rgba(248,81,73,.3)}
+  .cmp-head{font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+    font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .cmp-body{font-size:12.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+  .cmp-verdict{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:auto}
+  .cmp-verdict.found{background:rgba(63,185,80,.2);color:var(--green)}
+  .cmp-verdict.missed{background:rgba(248,81,73,.15);color:var(--red)}
+  .run.compare{background:var(--panel2);color:var(--text);border:1px solid var(--border)}
+  .run.compare:hover:not(:disabled){border-color:#d29922;color:#d29922}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔎 Incident Diagnostics</h1>
+  <span class="badge badge-nollm">● NO LLM</span>
+  <span class="badge badge-graph">KNOWLEDGE GRAPH</span>
+  <span class="stat" id="header-stat">Loading graphs…</span>
+</header>
+<div class="node-tooltip" id="node-tooltip"></div>
+<main>
+  <div class="col left">
+    <label class="sec">Knowledge graph</label>
+    <select id="graph-select" class="graph-select">
+      {% for key, info in graphs.items() %}
+      <option value="{{ key }}" {% if key == default_graph %}selected{% endif %}>
+        {{ info.label }} — {{ info.nodes }} nodes · {{ info.edges }} edges
+      </option>
+      {% endfor %}
+    </select>
+
+    <label class="sec">Stacktrace / alert</label>
+    <textarea id="trace">{{ default_trace }}</textarea>
+    <div class="presets" id="presets-container">
+      {% for key, info in graphs.items() %}
+        {% for p in info.presets %}
+        <button class="preset-btn" data-graph="{{ key }}" data-trace="{{ p.trace | e }}" title="{{ p.label }}"
+          style="{% if key != default_graph %}display:none{% endif %}">{{ p.label }}</button>
+        {% endfor %}
+      {% endfor %}
+    </div>
+    <div class="run-row">
+      <button class="run" id="run">⚡ Diagnose</button>
+      <button class="run demo" id="run-demo">▶ Demo Mode</button>
+    </div>
+    <button class="run compare" id="run-compare" style="margin-top:8px;width:100%">🔍 Compare with LLM</button>
+    <p style="color:var(--muted);font-size:12px;margin-top:14px">
+      Diagnosis is 100% deterministic graph traversal — the engine parses the
+      trace, matches the crash site to graph nodes, walks <code>CALLS</code> /
+      <code>IMPORTS</code> edges, then verifies each candidate (path · git · keywords).
+    </p>
+  </div>
+  <div class="col right">
+    <div id="result"><div class="empty">Paste a stacktrace and hit <b>Diagnose</b>.</div></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s==null?'':String(s)).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+let currentGraph = $('#graph-select').value;
+
+// Update header stat on load
+(function(){
+  const sel = $('#graph-select');
+  const opt = sel.options[sel.selectedIndex];
+  $('#header-stat').textContent = opt ? opt.textContent.trim() : '';
+})();
+
+$('#graph-select').onchange = function() {
+  currentGraph = this.value;
+  // swap visible preset buttons
+  document.querySelectorAll('.preset-btn').forEach(b => {
+    b.style.display = b.dataset.graph === currentGraph ? '' : 'none';
+  });
+  // update header stat
+  const opt = this.options[this.selectedIndex];
+  $('#header-stat').textContent = opt ? opt.textContent.trim() : '';
+  // clear results
+  $('#result').innerHTML = '<div class="empty">Graph switched. Paste a stacktrace and hit <b>Diagnose</b>.</div>';
+};
+
+document.querySelectorAll('.preset-btn').forEach(b => {
+  b.onclick = () => { $('#trace').value = b.dataset.trace; };
+});
+
+async function callApi() {
+  const res = await fetch('/api/diagnose', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({trace: $('#trace').value, graph_key: currentGraph})
+  });
+  return res.json();
+}
+
+// ── Fast mode ────────────────────────────────────────────────────────────────
+$('#run').onclick = async () => {
+  const btn = $('#run'); btn.disabled = true; btn.textContent = 'Diagnosing…';
+  try {
+    render(await callApi());
+  } catch(e) {
+    $('#result').innerHTML = `<div class="card rootcard fail">Request failed: ${esc(e.message)}</div>`;
+  } finally { btn.disabled = false; btn.textContent = '⚡ Diagnose'; }
+};
+
+// ── Demo mode ─────────────────────────────────────────────────────────────────
+$('#run-demo').onclick = async () => {
+  const btn = $('#run-demo'), fast = $('#run');
+  btn.disabled = true; fast.disabled = true;
+  btn.textContent = 'Running…';
+
+  // Fetch first — it's near-instant; we hold the data and animate the reveal
+  let data;
+  try {
+    data = await callApi();
+  } catch(e) {
+    $('#result').innerHTML = `<div class="card rootcard fail">Request failed: ${esc(e.message)}</div>`;
+    btn.disabled = false; fast.disabled = false; btn.textContent = '▶ Demo Mode';
+    return;
+  }
+
+  const inc = data.incident, h = data.headline;
+
+  const phases = [
+    {
+      label: 'Parsing stacktrace',
+      delay: 700,
+      output: () => {
+        const frames = inc.frames.map(f => `<span class="chip">${esc(f.function)}  <span style="color:var(--muted)">${esc(f.file)}:${f.line}</span></span>`).join('');
+        return `<b>${esc(inc.error_type)}</b>: ${esc(inc.error_message)}<br>${frames}`;
+      },
+    },
+    {
+      label: 'Matching entry nodes in graph',
+      delay: 800,
+      output: () => data.entry_nodes.map(n => `<span class="chip">${esc(n)}</span>`).join(''),
+    },
+    {
+      label: 'Traversing call graph (BFS)',
+      delay: 1000,
+      output: () => {
+        const path = data.traversal_path.slice(0,6).map(n =>
+          h && n.includes(h.node_name) ? `<b style="color:var(--green)">${esc(n)}</b>` : esc(n)
+        ).join(' <span style="color:var(--border)">→</span> ');
+        return `${data.nodes_visited} nodes · ${data.hops_completed} hops · ${data.candidates_found} candidates<br>${path}`;
+      },
+    },
+    {
+      label: 'Verifying candidates',
+      delay: 900,
+      output: () => data.candidates.slice(0,5).map(c => {
+        const cls = c.confidence === 'high' ? 'pass' : c.confidence === 'medium' ? '' : 'fail';
+        return `<span class="chip ${cls}">${esc(c.node_name)} ${confPill(c.confidence)}</span>`;
+      }).join(''),
+    },
+    {
+      label: 'Selecting root cause',
+      delay: 600,
+      output: () => h
+        ? `<b style="color:var(--green)">${esc(h.node_name)}</b> &nbsp;·&nbsp; ${esc(h.file)} line ${h.line_number} &nbsp;·&nbsp; ${confPill(h.confidence)}`
+        : '<span style="color:var(--red)">no valid candidate found</span>',
+    },
+  ];
+
+  $('#result').innerHTML = `<ul class="phase-list">${
+    phases.map((p,i) => `<li id="ph${i}">
+      <div class="ph-row"><span class="ph-icon">○</span><span class="ph-label">${esc(p.label)}</span></div>
+      <div class="ph-output" id="po${i}"></div>
+    </li>`).join('')
+  }</ul><div id="demo-result"></div>`;
+
+  for (let i = 0; i < phases.length; i++) {
+    const li = $(`#ph${i}`);
+    li.classList.add('active');
+    li.querySelector('.ph-icon').textContent = '◌';
+    await sleep(phases[i].delay);
+    li.classList.remove('active'); li.classList.add('done');
+    li.querySelector('.ph-icon').textContent = '✓';
+    const out = $(`#po${i}`);
+    out.innerHTML = phases[i].output();
+    out.classList.add('visible');
+  }
+
+  // Fade in full result below
+  const resultEl = $('#demo-result');
+  resultEl.style.opacity = '0';
+  resultEl.style.transition = 'opacity 0.5s';
+  renderInto(resultEl, data);
+  requestAnimationFrame(() => { requestAnimationFrame(() => { resultEl.style.opacity = '1'; }); });
+
+  btn.disabled = false; fast.disabled = false;
+  btn.textContent = '▶ Demo Mode';
+};
+
+function confPill(c){ return `<span class="pill conf-${esc(c)}">${esc((c||'').toUpperCase())}</span>`; }
+
+function render(d){ renderInto($('#result'), d); }
+
+function renderInto(el, d){
+  if(!d.is_valid && !d.headline){
+    el.innerHTML = `<div class="card rootcard fail">
+      <div class="rc-title fail">No root cause</div>
+      <div style="margin-top:8px">${esc(d.no_result_reason||'Diagnosis failed.')}</div></div>`;
+    return;
+  }
+  const h = d.headline, t = d.timings;
+  const checks = [...h.checks_passed.map(c=>`<span class="chip pass">✓ ${esc(c)}</span>`),
+                  ...h.checks_failed.map(c=>`<span class="chip fail">✗ ${esc(c)}</span>`)].join(' ');
+
+  const insight = h.in_traceback
+    ? `The crash site itself is the most likely cause.`
+    : `🎯 The root cause is <b>${esc(h.hops_from_entry)} hop(s) upstream</b> of the crash —
+       <code>${esc(h.node_name)}</code> never appears in the stacktrace. A human (or an LLM
+       reading only the trace) would miss it; the graph recovered it by walking call edges.`;
+
+  // candidate table
+  const rows = d.candidates.map(c => `
+    <tr class="${c.node_name===h.node_name?'head':''}">
+      <td class="mono">${esc(c.node_name)}</td>
+      <td class="mono">${esc(c.file)}</td>
+      <td>${c.hops_from_entry}${c.in_traceback?' <span style="color:var(--muted)">(in trace)</span>':''}</td>
+      <td>${confPill(c.confidence)}</td>
+      <td class="mono">${c.score}</td>
+    </tr>`).join('');
+
+  // traversal path
+  const path = d.traversal_path.map(n =>
+    n.includes(h.node_name) ? `<b>${esc(n)}</b>` : esc(n)
+  ).join(' <span class="arrow">→</span> ');
+
+  el.innerHTML = `
+    <div class="card rootcard">
+      <div class="rc-title">✓ Root cause found</div>
+      <div class="rc-node">${esc(h.node_name)} <span style="font-size:13px;font-weight:400;color:var(--muted);font-family:var(--mono)">${esc(h.node_type)}</span></div>
+      <div class="meta-rows">
+        <div class="meta-row"><span class="meta-k">Function name</span><span class="meta-v">${esc(h.node_name)}</span></div>
+        <div class="meta-row"><span class="meta-k">Node type</span><span class="meta-v">${esc(h.node_type)}</span></div>
+        <div class="meta-row"><span class="meta-k">File</span><span class="meta-v">${esc(h.file)}</span></div>
+        <div class="meta-row"><span class="meta-k">Line</span><span class="meta-v">${esc(h.line_number)}</span></div>
+        <div class="meta-row"><span class="meta-k">Last commit</span><span class="meta-v">${esc(h.git_evidence||'—')}</span></div>
+      </div>
+      <div class="grid">
+        <div class="kv"><div class="k">Confidence</div><div class="v">${confPill(h.confidence)}</div></div>
+        <div class="kv"><div class="k">Hops from crash</div><div class="v">${esc(h.hops_from_entry)}</div></div>
+        <div class="kv"><div class="k">In traceback?</div><div class="v">${h.in_traceback?'yes':'<span style="color:var(--green)">no — found via graph</span>'}</div></div>
+        <div class="kv"><div class="k">Diagnosed in</div><div class="v">${esc(t.total_ms)} ms</div></div>
+      </div>
+      <div style="margin-top:14px">${checks}</div>
+      <div class="insight">${insight}</div>
+    </div>
+
+    <div class="card" id="viz-card">
+      <label class="sec">Graph Traversal — BFS from entry nodes</label>
+      <div id="graph-viz"></div>
+      <div class="viz-legend">
+        <span><span class="leg-dot" style="background:#58a6ff"></span>Entry node</span>
+        <span><span class="leg-dot" style="background:#d29922"></span>Traversal</span>
+        <span><span class="leg-dot" style="background:#3fb950"></span>Root cause</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <label class="sec">Incident parsed from trace</label>
+      <div class="meta-rows" style="margin:8px 0">
+        <div class="meta-row"><span class="meta-k">Error type</span><span class="meta-v">${esc(d.incident.error_type)}</span></div>
+        <div class="meta-row"><span class="meta-k">Error message</span><span class="meta-v">${esc(d.incident.error_message)}</span></div>
+        <div class="meta-row"><span class="meta-k">Language</span><span class="meta-v">${esc(d.incident.language||'python')}</span></div>
+        <div class="meta-row"><span class="meta-k">Keywords</span><span class="meta-v">${d.incident.keywords.map(k=>`<span class="chip">${esc(k)}</span>`).join('')}</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <label class="sec">Ranked candidates (${d.candidates.length})</label>
+      <table><thead><tr><th>Node</th><th>File</th><th>Hops</th><th>Confidence</th><th>Score</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <p style="color:var(--muted);font-size:11.5px;margin-top:10px">
+        Headline = highest-confidence verified candidate. The crash-site node may score
+        marginally higher, but only the upstream cause clears all three checks.</p>
+    </div>
+
+    <div class="card">
+      <label class="sec">Pipeline</label>
+      <div class="timings">parse ${t.parse_ms}ms · entry ${t.entry_ms}ms · traverse ${t.traverse_ms}ms · verify ${t.verify_ms}ms
+        &nbsp;|&nbsp; visited ${d.nodes_visited} nodes · ${d.candidates_found} candidates · ${d.hops_completed} hops</div>
+      <details><summary>Traversal path</summary><div class="path" style="margin-top:8px">${path}</div></details>
+    </div>
+    <div id="compare-panel"></div>`;
+
+  // Kick off viz after DOM is painted
+  requestAnimationFrame(() => renderViz(d));
+}
+// ── D3 Graph Visualisation ────────────────────────────────────────────────────
+function renderViz(d) {
+  const sg = d.subgraph;
+  const container = document.getElementById('graph-viz');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!sg || !sg.nodes.length) {
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8b949e;font-size:13px">No subgraph data</div>';
+    return;
+  }
+
+  const W = container.clientWidth || 600, H = 380;
+  const COLOR = { entry:'#58a6ff', traversal:'#d29922', root_cause:'#3fb950', default:'#8b949e' };
+  const RADIUS = { entry:14, traversal:10, root_cause:18, default:8 };
+
+  const svg = d3.select(container).append('svg')
+    .attr('width', W).attr('height', H)
+    .style('cursor','grab');
+
+  const g = svg.append('g');
+
+  // zoom/pan
+  svg.call(d3.zoom().scaleExtent([0.3, 3])
+    .on('zoom', e => g.attr('transform', e.transform)));
+
+  const nodeMap = {};
+  sg.nodes.forEach(n => { nodeMap[n.id] = n; });
+
+  // force sim
+  const sim = d3.forceSimulation(sg.nodes)
+    .force('link', d3.forceLink(sg.edges).id(d => d.id).distance(80).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(-220))
+    .force('center', d3.forceCenter(W/2, H/2))
+    .force('collide', d3.forceCollide(d => RADIUS[d.role||'default'] + 6))
+    .stop();
+
+  // run sim headlessly for stable layout
+  for (let i = 0; i < 120; i++) sim.tick();
+
+  // edges
+  const link = g.append('g').selectAll('line').data(sg.edges).join('line')
+    .attr('stroke', '#2a3340').attr('stroke-width', 1.5).attr('opacity', 0)
+    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+
+  // node groups
+  const node = g.append('g').selectAll('g').data(sg.nodes).join('g')
+    .attr('transform', d => `translate(${d.x},${d.y})`)
+    .style('cursor', 'pointer')
+    .call(d3.drag()
+      .on('start', (e,d) => { if(!e.active) sim.alphaTarget(0.1).restart(); d.fx=d.x; d.fy=d.y; })
+      .on('drag',  (e,d) => { d.fx=e.x; d.fy=e.y; })
+      .on('end',   (e,d) => { if(!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; }));
+
+  // glow filter for root cause
+  const defs = svg.append('defs');
+  const filter = defs.append('filter').attr('id','glow');
+  filter.append('feGaussianBlur').attr('stdDeviation','4').attr('result','blur');
+  const feMerge = filter.append('feMerge');
+  feMerge.append('feMergeNode').attr('in','blur');
+  feMerge.append('feMergeNode').attr('in','SourceGraphic');
+
+  node.append('circle')
+    .attr('r', d => RADIUS[d.role||'default'])
+    .attr('fill', d => COLOR[d.role||'default'])
+    .attr('fill-opacity', 0.15)
+    .attr('stroke', d => COLOR[d.role||'default'])
+    .attr('stroke-width', d => d.role==='root_cause' ? 2.5 : 1.5)
+    .attr('filter', d => d.role==='root_cause' ? 'url(#glow)' : null)
+    .attr('opacity', 0);
+
+  node.append('text')
+    .text(d => d.name.length > 18 ? d.name.slice(0,17)+'…' : d.name)
+    .attr('text-anchor', 'middle').attr('dy', d => RADIUS[d.role||'default'] + 13)
+    .attr('font-size', 10).attr('fill', '#8b949e').attr('opacity', 0)
+    .style('pointer-events','none').style('user-select','none');
+
+  // tooltip
+  const tip = document.getElementById('node-tooltip');
+  node.on('mousemove', (e, d) => {
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX+14)+'px';
+    tip.style.top  = (e.clientY-10)+'px';
+    tip.innerHTML = `<b>${esc(d.name)}</b><br><span style="color:#8b949e">${esc(d.file)} · ${esc(d.type)} · hop ${d.hop}</span>`;
+  }).on('mouseleave', () => { tip.style.display='none'; });
+
+  // animate by hop level
+  const maxHop = Math.max(...sg.nodes.map(n => n.hop||0), 0);
+  const baseDelay = 300;
+
+  for (let hop = 0; hop <= maxHop + 1; hop++) {
+    const isRoot = hop > maxHop;
+    const delay = isRoot ? (maxHop+1)*baseDelay + 400 : hop*baseDelay + 200;
+    const targets = isRoot
+      ? node.filter(d => d.role==='root_cause')
+      : node.filter(d => (d.hop||0)===hop && d.role!=='root_cause');
+
+    targets.selectAll('circle').transition().delay(delay).duration(400)
+      .attr('opacity', 1).attr('fill-opacity', isRoot ? 0.25 : 0.15);
+    targets.selectAll('text').transition().delay(delay+100).duration(300).attr('opacity', 1);
+  }
+
+  // edges appear after all nodes
+  link.transition().delay((maxHop+2)*baseDelay + 200).duration(400).attr('opacity', 0.6);
+
+  // pulse root cause node after it appears
+  const rootDelay = (maxHop+2)*baseDelay + 600;
+  node.filter(d => d.role==='root_cause').selectAll('circle')
+    .transition().delay(rootDelay).duration(600).attr('r', d => RADIUS[d.role]+4)
+    .transition().duration(600).attr('r', d => RADIUS[d.role]);
+
+  sim.on('tick', () => {
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+    link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
+        .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+  }).alpha(0).restart();
+}
+
+// ── LLM Comparison ────────────────────────────────────────────────────────────
+$('#run-compare').onclick = async () => {
+  const btn = $('#run-compare');
+  btn.disabled = true; btn.textContent = '⏳ Calling LLM… (30–60s)';
+
+  // Make sure we have a diagnosis result to attach the panel to
+  const panel = document.getElementById('compare-panel');
+  if (!panel) {
+    // run diagnosis first if no result shown
+    try { render(await callApi()); } catch(e) { btn.disabled=false; btn.textContent='🔍 Compare with LLM'; return; }
+  }
+
+  const cp = document.getElementById('compare-panel');
+  if (!cp) { btn.disabled=false; btn.textContent='🔍 Compare with LLM'; return; }
+  cp.innerHTML = `<div class="card"><label class="sec">LLM Comparison</label>
+    <div style="color:var(--muted);font-size:13px;padding:20px 0 10px;text-align:center">
+      ⏳ Calling Claude Haiku twice — without tool, then with graph engine output…<br>
+      <span style="font-size:11px">This takes 30–60 seconds</span>
+    </div></div>`;
+
+  let data;
+  try {
+    const res = await fetch('/api/compare', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({trace: $('#trace').value, graph_key: currentGraph})
+    });
+    data = await res.json();
+  } catch(e) {
+    cp.innerHTML = `<div class="card rootcard fail">Compare request failed: ${esc(e.message)}</div>`;
+    btn.disabled=false; btn.textContent='🔍 Compare with LLM'; return;
+  }
+
+  renderComparison(cp, data);
+  btn.disabled=false; btn.textContent='🔍 Compare with LLM';
+};
+
+function renderComparison(el, data) {
+  if (data.error && !data.haiku_available) {
+    el.innerHTML = `<div class="card"><label class="sec">LLM Comparison</label>
+      <div style="color:var(--amber);font-size:13px;margin-top:8px">⚠ ${esc(data.error)}</div></div>`;
+    return;
+  }
+  const rootName = (data.engine && data.engine.headline) ? data.engine.headline.node_name : '';
+
+  function hit(answer) {
+    if (!answer || !rootName) return false;
+    for (const line of answer.split('\n')) {
+      if (line.trim().toUpperCase().startsWith('ROOT CAUSE') && answer.includes(rootName)) return true;
+    }
+    return false;
+  }
+
+  const nakedHit  = hit(data.naked  && data.naked.answer);
+  const toolHit   = hit(data.with_tool && data.with_tool.answer);
+
+  function col(title, icon, answer, seconds, found, colorClass) {
+    const verdict = found
+      ? `<span class="cmp-verdict found">✓ Found root cause</span>`
+      : `<span class="cmp-verdict missed">✗ Missed root cause</span>`;
+    return `<div class="cmp-col ${colorClass}">
+      <div class="cmp-head">${icon} ${esc(title)} ${verdict}</div>
+      <div class="cmp-body">${esc(answer||'No response')}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">⏱ ${seconds}s</div>
+    </div>`;
+  }
+
+  el.innerHTML = `<div class="card">
+    <label class="sec">LLM Comparison — Claude Haiku</label>
+    <p style="font-size:12.5px;color:var(--muted);margin:6px 0 12px">
+      Same model, same trace. The only variable is whether the graph engine's diagnosis is in the prompt.
+    </p>
+    <div class="cmp-grid">
+      ${col('Without Graph Tool', '🙈', data.naked.answer, data.naked.seconds, nakedHit, nakedHit?'winner':'loser')}
+      ${col('With Graph Tool',    '🎯', data.with_tool.answer, data.with_tool.seconds, toolHit, toolHit?'winner':'loser')}
+    </div>
+    ${rootName ? `<div style="margin-top:12px;font-size:12px;color:var(--muted)">
+      Real root cause the graph found: <b style="color:var(--green)">${esc(rootName)}</b>
+    </div>` : ''}
+  </div>`;
+}
+</script>
+</body>
+</html>
